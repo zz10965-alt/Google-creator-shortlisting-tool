@@ -30,6 +30,20 @@ def run_pipeline(campaign_input, creators, mode="DEMO"):
     now = datetime.now()
     kept, excluded = [], []
 
+    # Per-request overrides: the frontend can pass "weights" / "thresholds" in
+    # campaign_input (see README "Interface contract"). Anything not overridden
+    # falls back to the config.py defaults.
+    weights = {**config.WEIGHTS, **(campaign_input.get("weights") or {})}
+    thresholds = {
+        "risk_cutoff": config.RISK_CUTOFF,
+        "exclude_competitor": config.EXCLUDE_COMPETITOR,
+        "inactive_days": config.INACTIVE_DAYS,
+        "min_avg_views": config.MIN_AVG_VIEWS,
+        "min_content_match": config.MIN_CONTENT_MATCH,
+        "min_audience_fit": config.MIN_AUDIENCE_FIT,
+        **(campaign_input.get("thresholds") or {}),
+    }
+
     for c in creators:
         vids = c["videos"]
 
@@ -47,11 +61,11 @@ def run_pipeline(campaign_input, creators, mode="DEMO"):
         # These two use stats we already computed above, so they run first and drop
         # obviously-unusable candidates before we spend an LLM call on them. Each
         # rejection lands in `excluded` with a human-readable reason string.
-        if days_since is not None and days_since > config.INACTIVE_DAYS:
+        if days_since is not None and days_since > thresholds["inactive_days"]:
             excluded.append({"handle": c["handle"],
                              "reason": f"inactive ({days_since}d since last upload)"})
             continue
-        if avg_views < config.MIN_AVG_VIEWS:
+        if avg_views < thresholds["min_avg_views"]:
             excluded.append({"handle": c["handle"],
                              "reason": f"low_reach (avg {avg_views:,.0f} views)"})
             continue
@@ -62,18 +76,18 @@ def run_pipeline(campaign_input, creators, mode="DEMO"):
         # content/audience fit (weaker, tuned conservatively so good-but-niche
         # creators aren't over-filtered).
         llm_res = llm.score_creator(c, campaign_input)
-        if llm_res["risk_score"] >= config.RISK_CUTOFF:
+        if llm_res["risk_score"] >= thresholds["risk_cutoff"]:
             excluded.append({"handle": c["handle"],
                              "reason": f"brand_safety (risk={llm_res['risk_score']})"})
             continue
-        if config.EXCLUDE_COMPETITOR and llm_res["competitor_conflict"]:
+        if thresholds["exclude_competitor"] and llm_res["competitor_conflict"]:
             excluded.append({"handle": c["handle"], "reason": "competitor_conflict"})
             continue
-        if llm_res["content_match"] < config.MIN_CONTENT_MATCH:
+        if llm_res["content_match"] < thresholds["min_content_match"]:
             excluded.append({"handle": c["handle"],
                              "reason": f"content_mismatch (content_match={llm_res['content_match']})"})
             continue
-        if llm_res["audience_fit"] < config.MIN_AUDIENCE_FIT:
+        if llm_res["audience_fit"] < thresholds["min_audience_fit"]:
             excluded.append({"handle": c["handle"],
                              "reason": f"audience_mismatch (audience_fit={llm_res['audience_fit']})"})
             continue
@@ -117,8 +131,8 @@ def run_pipeline(campaign_input, creators, mode="DEMO"):
 
     # Weighted total (0-100).
     for r in kept:
-        r["total"] = round(sum(config.WEIGHTS[k] * r["scores"][k] / 100.0
-                               for k in config.WEIGHTS), 2)
+        r["total"] = round(sum(weights[k] * r["scores"][k] / 100.0
+                               for k in weights), 2)
 
     # Budget / value layer.
     cpm = config.campaign_cpm(campaign_input.get("keywords", []))

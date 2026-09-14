@@ -7,16 +7,42 @@ def _youtube():
     return build("youtube", "v3", developerKey=config.YOUTUBE_API_KEY)
 
 
+def _resolve_handle(yt, handle):
+    """Resolve an explicit @handle (from campaign_input["handles"]) to a channel id.
+
+    Returns None (rather than raising) on any lookup failure, so one bad handle
+    in the list doesn't take down the whole discovery run.
+    """
+    h = handle if str(handle).startswith("@") else "@" + str(handle).lstrip("@")
+    try:
+        resp = yt.channels().list(part="id", forHandle=h).execute()
+        items = resp.get("items", [])
+        return items[0]["id"] if items else None
+    except Exception:
+        return None
+
+
 def get_creators(brief, max_candidates=None):
     yt = _youtube()
     max_candidates = max_candidates or config.DISCOVER_MAX_RESULTS
+    videos_per_creator = brief.get("videos_per_creator") or config.MAX_VIDEOS_PER_CREATOR
     q = " ".join(brief.get("keywords", [])[:3])
 
-    # 1. Discover candidates: paginate through video search results, collecting the
-    #    unique channels behind them until we have enough candidates or run out of pages.
+    # 1a. Explicit handles (campaign_input["handles"]) always get checked first,
+    #     regardless of keyword discovery below.
     channel_ids = []
+    for h in brief.get("handles") or []:
+        cid = _resolve_handle(yt, h)
+        if cid and cid not in channel_ids:
+            channel_ids.append(cid)
+
+    # 1b. Keyword-based discovery: paginate through video search results, collecting
+    #    the unique channels behind them until we have enough candidates or run out
+    #    of pages. Skipped once the explicit handles alone already fill the quota.
     page_token = None
     for _ in range(config.DISCOVER_MAX_PAGES):
+        if len(channel_ids) >= max_candidates:
+            break
         params = {"part": "snippet", "q": q, "type": "video",
                   "maxResults": 50, "relevanceLanguage": "en"}
         if page_token:
@@ -57,14 +83,15 @@ def get_creators(brief, max_candidates=None):
             continue
         uploads = (item["contentDetails"]["relatedPlaylists"].get("uploads", "")
                    if "contentDetails" in item else "")
-        vids = _get_videos(yt, uploads)
+        vids = _get_videos(yt, uploads, max_videos=videos_per_creator)
         if len(vids) < 3:
             continue  # too little data to compute stability/consistency
         creators.append({"handle": handle, "subscriber_count": subs, "videos": vids})
     return creators
 
 
-def _get_videos(yt, uploads_playlist, max_videos=20):
+def _get_videos(yt, uploads_playlist, max_videos=None):
+    max_videos = max_videos or config.MAX_VIDEOS_PER_CREATOR
     if not uploads_playlist:
         return []
     ids = []

@@ -90,13 +90,20 @@ _ASPECT_SYNONYMS = {
 
 
 def _aspects(keywords):
-    """Split the brief keywords into aspects, each carrying its synonym set."""
+    """Split the brief keywords into aspects, each carrying its synonym set.
+
+    Known words (e.g. from _ASPECT_SYNONYMS) are kept regardless of length, so
+    short-but-meaningful keywords like "AI" or "EV" still count. The length
+    filter only applies to *unmapped* words, to keep meaningless fragments
+    ("a", "of") out of the substring match.
+    """
     aspects = []
     for k in keywords:
         for w in str(k).lower().replace("-", " ").split():
-            if len(w) < 3:
-                continue
-            aspects.append(_ASPECT_SYNONYMS.get(w, [w]))
+            if w in _ASPECT_SYNONYMS:
+                aspects.append(_ASPECT_SYNONYMS[w])
+            elif len(w) >= 3:
+                aspects.append([w])
     return aspects
 
 
