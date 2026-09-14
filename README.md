@@ -16,7 +16,7 @@ pip install -r requirements.txt
 
 **Run from the command line:** `python main.py`
 
-## Environment variables (`.env`, do not commit)
+## Environment variables (`.env`, committed to this private repo)
 
 ```bash
 YOUTUBE_API_KEY=your_YouTube_Data_API_v3_key
@@ -55,8 +55,21 @@ CV-based ones (4, 6) are **reversed** so a smaller CV maps to a higher score. Ra
 | Off-topic | Content doesn't match the brief | `content_match < 20` |
 | Wrong audience | Audience doesn't match the target | `audience_fit < 20` |
 
-**Budget / value layer (separate):** cost estimate (benchmark CPM x engagement premium) ->
-value-per-dollar -> **0/1 knapsack** (maximize sum of total-score x effective-value within budget).
+## Budget / value layer (separate from the score)
+
+After ranking, each creator gets a price and a value estimate, then we pick the optimal
+set for the budget with a **0/1 knapsack** (it maximizes total value, unlike a greedy
+"cheapest first" pass).
+
+| Metric | Formula | Meaning |
+|---|---|---|
+| Estimated cost | `(avg_views / 1000) x CPM x premium` | price per sponsored video. CPM is a niche benchmark; premium = 1.15 if engagement beats the benchmark, 0.85 if under half of it, else 1.0 |
+| Effective value | `avg_views x (ER / benchmark) x (audience_fit / 100)` | expected campaign value: reach x engagement quality x audience fit |
+| Value-per-dollar | `effective_value / estimated_cost` | efficiency: how much value each $1 buys |
+| Portfolio | 0/1 knapsack: maximize `sum(total_score x effective_value)` within `budget_cap`, up to `target_k` creators | the optimal creator set for a given budget |
+
+Niche CPM benchmarks ($ per 1,000 views), tunable in `config.py`: beauty 12, tech 28,
+finance 30, gaming 8, fashion 15, food 10, fitness 12, default 15.
 
 ## Files
 
